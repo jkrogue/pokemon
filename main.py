@@ -103,6 +103,31 @@ pokemon_positions = {
     "Totodile": totodile_base,
 }
 
+# --- Button Class for Touch Input ---
+class Button:
+    def __init__(self, x, y, w, h, text, color, text_color=BLACK):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.text = text
+        self.color = color
+        self.text_color = text_color
+        self.hover = False
+    
+    def draw(self, surface, font_obj=font):
+        # Draw button with border
+        color = tuple(min(c + 30, 255) for c in self.color) if self.hover else self.color
+        pygame.draw.rect(surface, color, self.rect)
+        pygame.draw.rect(surface, BLACK, self.rect, 3)
+        # Draw text centered
+        text_surface = font_obj.render(self.text, True, self.text_color)
+        text_rect = text_surface.get_rect(center=self.rect.center)
+        surface.blit(text_surface, text_rect)
+    
+    def is_clicked(self, pos):
+        return self.rect.collidepoint(pos)
+    
+    def update_hover(self, pos):
+        self.hover = self.rect.collidepoint(pos)
+
 # --- Game variables ---
 mode_select = True   # True when selecting mode (1P or 2P)
 mode_options = ["1 Player (vs AI)", "2 Player (Local)"]
@@ -114,6 +139,35 @@ player_choices = [0, 0]  # indices into list below
 player_choice_names = list(pokemon_data.keys())
 player_selecting = 0     # 0 or 1 indicating which player selecting
 battle_start = False
+
+# --- UI Buttons ---
+mode_buttons = []
+pokemon_selection_rects = []
+battle_buttons = []
+restart_button = None
+
+def create_mode_buttons():
+    global mode_buttons
+    mode_buttons = []
+    for i, option in enumerate(mode_options):
+        btn = Button(WIDTH // 2 - 150, 150 + i * 70, 300, 50, option, GRAY, BLACK)
+        mode_buttons.append(btn)
+
+def create_battle_buttons():
+    global battle_buttons
+    battle_buttons = [
+        Button(20, HEIGHT - 120, 120, 40, "Special", ORANGE, WHITE),
+        Button(150, HEIGHT - 120, 120, 40, "Tackle", GRAY, WHITE),
+        Button(280, HEIGHT - 120, 120, 40, "Potion", GREEN, WHITE),
+    ]
+
+def create_restart_button():
+    global restart_button
+    restart_button = Button(WIDTH // 2 - 100, HEIGHT // 2 + 50, 200, 50, "Restart", RED, WHITE)
+
+# Initialize buttons
+create_mode_buttons()
+create_battle_buttons()
 
 # Battle variables (filled when battle starts)
 players = [{}, {}]
@@ -311,16 +365,22 @@ def draw_scene():
     # Draw attack message or turn info
     if game_over:
         screen.blit(big_font.render(f"{winner} Wins!", True, BLACK), (WIDTH // 2 - 120, HEIGHT // 2 - 50))
-        screen.blit(font.render("Press R to restart", True, BLACK), (WIDTH // 2 - 90, HEIGHT // 2 + 10))
+        if restart_button:
+            restart_button.draw(screen)
     else:
         turn_name = "Player 1" if turn == 0 else ("Player 2" if mode_selected == 1 else "AI")
-        screen.blit(font.render(f"{turn_name}'s turn", True, BLACK), (WIDTH // 2 - 60, HEIGHT - 60))
+        screen.blit(font.render(f"{turn_name}'s turn", True, BLACK), (WIDTH // 2 - 60, HEIGHT - 160))
         if attack_message:
-            screen.blit(font.render(attack_message, True, BLACK), (WIDTH // 2 - 100, HEIGHT - 30))
+            screen.blit(font.render(attack_message, True, BLACK), (WIDTH // 2 - 100, HEIGHT - 130))
+        
+        # Draw battle action buttons for current player
+        if turn == 0 or mode_selected == 1:  # Show buttons for human players
+            for btn in battle_buttons:
+                btn.draw(screen)
 
-    # Draw potion counts on screen (bottom left and right)
-    screen.blit(font.render(f"Potions Left: {potion_counts[0]}", True, BLACK), (20, HEIGHT - 40))
-    screen.blit(font.render(f"Potions Left: {potion_counts[1]}", True, BLACK), (WIDTH - 160, HEIGHT - 40))
+    # Draw potion counts on screen (above buttons)
+    screen.blit(font.render(f"P1 Potions: {potion_counts[0]}", True, BLACK), (20, HEIGHT - 160))
+    screen.blit(font.render(f"P2 Potions: {potion_counts[1]}", True, BLACK), (WIDTH - 150, HEIGHT - 160))
 
 # --- Play sound safely ---
 def play_sound(sound):
@@ -412,7 +472,7 @@ def handle_battle_input(event):
 
 # --- Reset game to mode select ---
 def reset_game():
-    global mode_select, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles
+    global mode_select, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles, restart_button
     mode_select = True
     pokemon_select = False
     battle_start = False
@@ -428,23 +488,30 @@ def reset_game():
     damage_popup = None
     projectiles.clear()
     particles.clear()
+    restart_button = None
 
 # --- Mode select screen ---
 def draw_mode_select():
     screen.fill(WHITE)
     screen.blit(big_font.render("Select Mode", True, BLACK), (WIDTH // 2 - 130, 50))
-    for i, option in enumerate(mode_options):
-        color = RED if i == mode_selected else BLACK
-        screen.blit(font.render(option, True, color), (WIDTH // 2 - 100, 150 + i * 50))
-    screen.blit(font.render("Use UP/DOWN + ENTER", True, BLACK), (WIDTH // 2 - 120, HEIGHT - 50))
+    # Draw mode buttons
+    for i, btn in enumerate(mode_buttons):
+        if i == mode_selected:
+            btn.color = YELLOW
+        else:
+            btn.color = GRAY
+        btn.draw(screen)
+    screen.blit(font.render("Tap to select or use UP/DOWN + ENTER", True, BLACK), (WIDTH // 2 - 180, HEIGHT - 50))
 
 # --- Pokemon select screen ---
 def draw_pokemon_select():
+    global pokemon_selection_rects
     screen.fill(WHITE)
     screen.blit(big_font.render(f"Player {player_selecting + 1} Select", True, BLACK), (WIDTH // 2 - 160, 50))
     spacing = 220
     start_x = WIDTH // 2 - spacing
     y = HEIGHT // 2
+    pokemon_selection_rects = []
     for i, p_name in enumerate(player_choice_names):
         sprite = pokemon_data[p_name]["sprite"]
         x = start_x + i * spacing
@@ -455,7 +522,13 @@ def draw_pokemon_select():
         if i == player_choices[player_selecting]:
             border_color = BLUE if player_selecting == 1 else RED
             pygame.draw.rect(screen, border_color, (x - 60, y - 60, 120, 120), 4)
-    screen.blit(font.render("Use LEFT/RIGHT to choose, ENTER to confirm", True, BLACK), (WIDTH // 2 - 210, HEIGHT - 50))
+        # Store clickable rect for each pokemon
+        pokemon_selection_rects.append(pygame.Rect(x - 60, y - 60, 120, 120))
+    
+    # Draw confirm button
+    confirm_btn = Button(WIDTH // 2 - 100, HEIGHT - 80, 200, 50, "Confirm", GREEN, BLACK)
+    confirm_btn.draw(screen)
+    screen.blit(font.render("Tap Pokemon or use LEFT/RIGHT + ENTER", True, BLACK), (WIDTH // 2 - 200, HEIGHT - 120))
 
 async def main():
     global mode_select, mode_selected, animation_timer, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles
@@ -463,6 +536,8 @@ async def main():
     clock = pygame.time.Clock()
 
     while True:
+        mouse_pos = pygame.mouse.get_pos()
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -479,6 +554,18 @@ async def main():
                         pokemon_select = True
                         player_selecting = 0
                         player_choices = [0, 0]
+                
+                # Handle mouse/tap input for mode selection
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    for i, btn in enumerate(mode_buttons):
+                        if btn.is_clicked(mouse_pos):
+                            mode_selected = i
+                            mode_select = False
+                            pokemon_select = True
+                            player_selecting = 0
+                            player_choices = [0, 0]
+                            break
+                            
             elif pokemon_select:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_LEFT:
@@ -496,10 +583,48 @@ async def main():
                         else:
                             pokemon_select = False
                             battle_start = True
+                
+                # Handle mouse/tap input for pokemon selection
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    # Check if tapped on a pokemon
+                    for i, rect in enumerate(pokemon_selection_rects):
+                        if rect.collidepoint(mouse_pos):
+                            player_choices[player_selecting] = i
+                            break
+                    
+                    # Check if tapped confirm button
+                    confirm_btn = Button(WIDTH // 2 - 100, HEIGHT - 80, 200, 50, "Confirm", GREEN, BLACK)
+                    if confirm_btn.is_clicked(mouse_pos):
+                        if player_selecting == 0:
+                            player_selecting = 1
+                            if mode_selected == 0:
+                                pokemon_select = False
+                                battle_start = True
+                        else:
+                            pokemon_select = False
+                            battle_start = True
 
             elif battle_start:
                 if event.type == pygame.KEYDOWN:
                     handle_battle_input(event)
+                
+                # Handle mouse/tap input for battle
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if game_over:
+                        if restart_button and restart_button.is_clicked(mouse_pos):
+                            reset_game()
+                    else:
+                        # Check battle action buttons (only for human players)
+                        if (turn == 0 or mode_selected == 1) and not attacking:
+                            for i, btn in enumerate(battle_buttons):
+                                if btn.is_clicked(mouse_pos):
+                                    if i == 0:  # Special
+                                        perform_attack(turn, "special")
+                                    elif i == 1:  # Tackle
+                                        perform_attack(turn, "tackle")
+                                    elif i == 2:  # Potion
+                                        perform_attack(turn, "potion")
+                                    break
 
         # Update damage popup timer
         if damage_popup:
@@ -510,6 +635,18 @@ async def main():
             else:
                 damage_popup = (text, x, y, timer)
 
+        # Update button hover states
+        if mode_select:
+            for btn in mode_buttons:
+                btn.update_hover(mouse_pos)
+        elif battle_start:
+            if not game_over:
+                for btn in battle_buttons:
+                    btn.update_hover(mouse_pos)
+            else:
+                if restart_button:
+                    restart_button.update_hover(mouse_pos)
+        
         # Update particles and projectiles
         update_particles()
         update_projectiles()
@@ -551,6 +688,10 @@ async def main():
             if mode_selected == 0 and turn == 1 and not attacking:
                 pygame.time.wait(600)
                 ai_turn()
+        
+        # Create restart button when game is over
+        if battle_start and game_over and restart_button is None:
+            create_restart_button()
 
         # Clear screen and draw appropriate screen
         if mode_select:
