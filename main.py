@@ -80,7 +80,7 @@ pokemon_data = {
         }
     },
     "Totodile": {
-        "sprite": load_sprite("data/tot.png"),
+        "sprite": load_sprite("data/toto.png"),
         "hp": 70,
         "max_hp": 70,
         "color": BLUE,
@@ -143,7 +143,8 @@ battle_start = False
 # --- UI Buttons ---
 mode_buttons = []
 pokemon_selection_rects = []
-battle_buttons = []
+battle_buttons_p1 = []
+battle_buttons_p2 = []
 restart_button = None
 
 def create_mode_buttons():
@@ -154,11 +155,18 @@ def create_mode_buttons():
         mode_buttons.append(btn)
 
 def create_battle_buttons():
-    global battle_buttons
-    battle_buttons = [
-        Button(20, HEIGHT - 120, 120, 40, "Special", ORANGE, WHITE),
-        Button(150, HEIGHT - 120, 120, 40, "Tackle", GRAY, WHITE),
-        Button(280, HEIGHT - 120, 120, 40, "Potion", GREEN, WHITE),
+    global battle_buttons_p1, battle_buttons_p2
+    # Player 1 buttons on the left
+    battle_buttons_p1 = [
+        Button(20, HEIGHT - 70, 120, 40, "Special", ORANGE, WHITE),
+        Button(150, HEIGHT - 70, 120, 40, "Tackle", GRAY, WHITE),
+        Button(280, HEIGHT - 70, 120, 40, "Potion", GREEN, WHITE),
+    ]
+    # Player 2 buttons on the right
+    battle_buttons_p2 = [
+        Button(WIDTH - 400, HEIGHT - 70, 120, 40, "Special", ORANGE, WHITE),
+        Button(WIDTH - 270, HEIGHT - 70, 120, 40, "Tackle", GRAY, WHITE),
+        Button(WIDTH - 140, HEIGHT - 70, 120, 40, "Potion", GREEN, WHITE),
     ]
 
 def create_restart_button():
@@ -181,6 +189,7 @@ message_timer = 0
 damage_popup = None
 animation_timer = 0
 attacking = False
+action_lockout = 0  # Timer to prevent actions during animations (in frames)
 
 # Potion usage: 3 each
 potion_counts = [3,3]
@@ -233,23 +242,31 @@ def draw_particles():
     for p in particles:
         pygame.draw.circle(screen, p["color"], (int(p["x"]), int(p["y"])), p["radius"])
 
-def spawn_projectile(p_type, start_pos, target_pos):
+def spawn_projectile(p_type, start_pos, target_pos, attacker_idx):
     if p_type == "fire":
         dx = (target_pos[0] - start_pos[0]) / 30
         dy = (target_pos[1] - start_pos[1]) / 30
         color = ORANGE
         projectiles.append({"x": start_pos[0], "y": start_pos[1], "dx": dx, "dy": dy,
-                            "radius": 8, "color": color, "target": target_pos, "type": "fire"})
+                            "radius": 8, "color": color, "target": target_pos, "type": "fire",
+                            "attacker_idx": attacker_idx})
     elif p_type == "leaf":
         projectiles.append({"x": start_pos[0], "y": start_pos[1],
                             "center": target_pos, "angle": 0, "radius": 8, "color": LEAF_GREEN,
-                            "distance": 0, "type": "leaf_boomerang", "start": start_pos})
+                            "distance": 0, "type": "leaf_boomerang", "start": start_pos,
+                            "attacker_idx": attacker_idx})
     elif p_type == "water":
         dx = (target_pos[0] - start_pos[0]) / 30
         dy = (target_pos[1] - start_pos[1]) / 30
         color = SKY_BLUE
         projectiles.append({"x": start_pos[0], "y": start_pos[1], "dx": dx, "dy": dy,
-                            "radius": 8, "color": color, "target": target_pos, "type": "water"})
+                            "radius": 8, "color": color, "target": target_pos, "type": "water",
+                            "attacker_idx": attacker_idx})
+    elif p_type == "physical":
+        # Tackle: instant hit with red circle effect
+        projectiles.append({"x": target_pos[0], "y": target_pos[1],
+                            "radius": 50, "color": RED, "target": target_pos, "type": "physical",
+                            "attacker_idx": attacker_idx, "timer": 20})
 
 def update_projectiles():
     global game_over, winner, damage_popup
@@ -258,14 +275,15 @@ def update_projectiles():
             p["x"] += p["dx"]
             p["y"] += p["dy"]
             if abs(p["x"] - p["target"][0]) < 10 and abs(p["y"] - p["target"][1]) < 10:
-                # Target is player 2 always for fire (player 1 attacks)
-                target_index = 1 if turn == 0 else 0
-                damage = random.randint(*players[turn]["attacks"]["special"]["damage_range"])
+                # Damage the defender (opposite of attacker)
+                attacker_idx = p["attacker_idx"]
+                target_index = 1 - attacker_idx
+                damage = random.randint(*players[attacker_idx]["attacks"]["special"]["damage_range"])
                 players[target_index]["hp"] -= damage
                 if players[target_index]["hp"] <= 0:
                     players[target_index]["hp"] = 0
                     game_over = True
-                    winner = players[turn]["name"]
+                    winner = players[attacker_idx]["name"]
                     play_sound(victory_sound)
                 spawn_particles("fire", p["target"])
                 damage_popup = (f"-{damage}", p["target"][0], p["target"][1] - 50, 60)
@@ -279,13 +297,14 @@ def update_projectiles():
             p["x"] = x
             p["y"] = y
             if p["distance"] > 60:
-                target_index = 1 if turn == 0 else 0
-                damage = random.randint(*players[turn]["attacks"]["special"]["damage_range"])
+                attacker_idx = p["attacker_idx"]
+                target_index = 1 - attacker_idx
+                damage = random.randint(*players[attacker_idx]["attacks"]["special"]["damage_range"])
                 players[target_index]["hp"] -= damage
                 if players[target_index]["hp"] <= 0:
                     players[target_index]["hp"] = 0
                     game_over = True
-                    winner = players[turn]["name"]
+                    winner = players[attacker_idx]["name"]
                     play_sound(victory_sound)
                 spawn_particles("leaf", battle_positions[target_index])
                 damage_popup = (f"-{damage}", battle_positions[target_index][0], battle_positions[target_index][1] - 50, 60)
@@ -295,16 +314,37 @@ def update_projectiles():
             p["x"] += p["dx"]
             p["y"] += p["dy"]
             if abs(p["x"] - p["target"][0]) < 10 and abs(p["y"] - p["target"][1]) < 10:
-                target_index = 1 if turn == 0 else 0
-                damage = random.randint(*players[turn]["attacks"]["special"]["damage_range"])
+                attacker_idx = p["attacker_idx"]
+                target_index = 1 - attacker_idx
+                damage = random.randint(*players[attacker_idx]["attacks"]["special"]["damage_range"])
                 players[target_index]["hp"] -= damage
                 if players[target_index]["hp"] <= 0:
                     players[target_index]["hp"] = 0
                     game_over = True
-                    winner = players[turn]["name"]
+                    winner = players[attacker_idx]["name"]
                     play_sound(victory_sound)
                 spawn_particles("water", p["target"])
                 damage_popup = (f"-{damage}", p["target"][0], p["target"][1] - 50, 60)
+                projectiles.remove(p)
+        
+        elif p["type"] == "physical":
+            # Tackle: deal damage immediately on first frame, then show circle animation
+            if "damage_dealt" not in p:
+                attacker_idx = p["attacker_idx"]
+                target_index = 1 - attacker_idx
+                damage = 12  # Fixed damage for tackle
+                players[target_index]["hp"] -= damage
+                if players[target_index]["hp"] <= 0:
+                    players[target_index]["hp"] = 0
+                    game_over = True
+                    winner = players[attacker_idx]["name"]
+                    play_sound(victory_sound)
+                damage_popup = (f"-{damage}", p["target"][0], p["target"][1] - 50, 60)
+                p["damage_dealt"] = True
+            
+            # Count down timer and remove when done
+            p["timer"] -= 1
+            if p["timer"] <= 0:
                 projectiles.remove(p)
 
 def draw_projectiles():
@@ -369,18 +409,22 @@ def draw_scene():
             restart_button.draw(screen)
     else:
         turn_name = "Player 1" if turn == 0 else ("Player 2" if mode_selected == 1 else "AI")
-        screen.blit(font.render(f"{turn_name}'s turn", True, BLACK), (WIDTH // 2 - 60, HEIGHT - 160))
+        screen.blit(font.render(f"{turn_name}'s turn", True, BLACK), (WIDTH // 2 - 60, HEIGHT - 110))
         if attack_message:
-            screen.blit(font.render(attack_message, True, BLACK), (WIDTH // 2 - 100, HEIGHT - 130))
+            screen.blit(font.render(attack_message, True, BLACK), (WIDTH // 2 - 100, HEIGHT - 90))
         
-        # Draw battle action buttons for current player
-        if turn == 0 or mode_selected == 1:  # Show buttons for human players
-            for btn in battle_buttons:
-                btn.draw(screen)
+        # Draw battle action buttons for current player (only for human turns and no lockout)
+        if action_lockout == 0:
+            if turn == 0:  # Player 1's turn - show buttons on left
+                for btn in battle_buttons_p1:
+                    btn.draw(screen)
+            elif turn == 1 and mode_selected == 1:  # Player 2's turn in 2P mode - show buttons on right
+                for btn in battle_buttons_p2:
+                    btn.draw(screen)
 
     # Draw potion counts on screen (above buttons)
-    screen.blit(font.render(f"P1 Potions: {potion_counts[0]}", True, BLACK), (20, HEIGHT - 160))
-    screen.blit(font.render(f"P2 Potions: {potion_counts[1]}", True, BLACK), (WIDTH - 150, HEIGHT - 160))
+    screen.blit(font.render(f"P1 Potions: {potion_counts[0]}", True, BLACK), (20, HEIGHT - 110))
+    screen.blit(font.render(f"P2 Potions: {potion_counts[1]}", True, BLACK), (WIDTH - 190, HEIGHT - 110))
 
 # --- Play sound safely ---
 def play_sound(sound):
@@ -389,7 +433,7 @@ def play_sound(sound):
 
 # --- Attack execution ---
 def perform_attack(attacker_idx, attack_type):
-    global attacking, attack_message, turn, animation_timer, damage_popup, game_over, winner
+    global attacking, attack_message, turn, animation_timer, damage_popup, game_over, winner, action_lockout
     attacker = players[attacker_idx]
     defender_idx = 1 - attacker_idx
     defender = players[defender_idx]
@@ -404,9 +448,11 @@ def perform_attack(attacker_idx, attack_type):
             damage_popup = (f"+20", battle_positions[attacker_idx][0], battle_positions[attacker_idx][1] - 50, 60)
             attacking = True
             animation_timer = 30
+            action_lockout = 60  # 1 second at 60 FPS
             turn = defender_idx
         else:
             attack_message = "No potions left or HP full!"
+            # Don't switch turn if action failed - let player try again
         return
 
     if attack_type == "special":
@@ -423,10 +469,11 @@ def perform_attack(attacker_idx, attack_type):
     start_pos = battle_positions[attacker_idx]
     target_pos = battle_positions[defender_idx]
 
-    spawn_projectile(attack["type"], start_pos, target_pos)
+    spawn_projectile(attack["type"], start_pos, target_pos, attacker_idx)
 
     attacking = True
     animation_timer = 30
+    action_lockout = 60  # 1 second at 60 FPS
     turn = defender_idx
 
 # --- AI logic for 1P mode ---
@@ -452,6 +499,10 @@ def handle_battle_input(event):
             reset_game()
         return
 
+    # Don't allow input during action lockout
+    if action_lockout > 0:
+        return
+
     # Player 1 keys: SPACE (special), T (tackle), P (potion)
     if turn == 0:
         if event.key == pygame.K_SPACE:
@@ -472,7 +523,7 @@ def handle_battle_input(event):
 
 # --- Reset game to mode select ---
 def reset_game():
-    global mode_select, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles, restart_button
+    global mode_select, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles, restart_button, action_lockout
     mode_select = True
     pokemon_select = False
     battle_start = False
@@ -489,6 +540,7 @@ def reset_game():
     projectiles.clear()
     particles.clear()
     restart_button = None
+    action_lockout = 0
 
 # --- Mode select screen ---
 def draw_mode_select():
@@ -528,10 +580,9 @@ def draw_pokemon_select():
     # Draw confirm button
     confirm_btn = Button(WIDTH // 2 - 100, HEIGHT - 80, 200, 50, "Confirm", GREEN, BLACK)
     confirm_btn.draw(screen)
-    screen.blit(font.render("Tap Pokemon or use LEFT/RIGHT + ENTER", True, BLACK), (WIDTH // 2 - 200, HEIGHT - 120))
 
 async def main():
-    global mode_select, mode_selected, animation_timer, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles
+    global mode_select, mode_selected, animation_timer, pokemon_select, battle_start, player_choices, player_selecting, players, turn, game_over, winner, potion_counts, attacking, attack_message, damage_popup, projectiles, particles, action_lockout
     # --- Main game loop ---
     clock = pygame.time.Clock()
 
@@ -614,17 +665,30 @@ async def main():
                         if restart_button and restart_button.is_clicked(mouse_pos):
                             reset_game()
                     else:
-                        # Check battle action buttons (only for human players)
-                        if (turn == 0 or mode_selected == 1) and not attacking:
-                            for i, btn in enumerate(battle_buttons):
-                                if btn.is_clicked(mouse_pos):
-                                    if i == 0:  # Special
-                                        perform_attack(turn, "special")
-                                    elif i == 1:  # Tackle
-                                        perform_attack(turn, "tackle")
-                                    elif i == 2:  # Potion
-                                        perform_attack(turn, "potion")
-                                    break
+                        # Check battle action buttons (only for human players on their turn)
+                        if not attacking and action_lockout == 0:
+                            # Player 1 can act on turn 0
+                            if turn == 0:
+                                for i, btn in enumerate(battle_buttons_p1):
+                                    if btn.is_clicked(mouse_pos):
+                                        if i == 0:  # Special
+                                            perform_attack(turn, "special")
+                                        elif i == 1:  # Tackle
+                                            perform_attack(turn, "tackle")
+                                        elif i == 2:  # Potion
+                                            perform_attack(turn, "potion")
+                                        break
+                            # Player 2 can act on turn 1 (if 2P mode)
+                            elif turn == 1 and mode_selected == 1:
+                                for i, btn in enumerate(battle_buttons_p2):
+                                    if btn.is_clicked(mouse_pos):
+                                        if i == 0:  # Special
+                                            perform_attack(turn, "special")
+                                        elif i == 1:  # Tackle
+                                            perform_attack(turn, "tackle")
+                                        elif i == 2:  # Potion
+                                            perform_attack(turn, "potion")
+                                        break
 
         # Update damage popup timer
         if damage_popup:
@@ -634,6 +698,10 @@ async def main():
                 damage_popup = None
             else:
                 damage_popup = (text, x, y, timer)
+        
+        # Update action lockout timer
+        if action_lockout > 0:
+            action_lockout -= 1
 
         # Update button hover states
         if mode_select:
@@ -641,8 +709,14 @@ async def main():
                 btn.update_hover(mouse_pos)
         elif battle_start:
             if not game_over:
-                for btn in battle_buttons:
-                    btn.update_hover(mouse_pos)
+                # Only update hover for buttons when they're visible (human player's turn and no lockout)
+                if action_lockout == 0:
+                    if turn == 0:  # Player 1's buttons
+                        for btn in battle_buttons_p1:
+                            btn.update_hover(mouse_pos)
+                    elif turn == 1 and mode_selected == 1:  # Player 2's buttons in 2P mode
+                        for btn in battle_buttons_p2:
+                            btn.update_hover(mouse_pos)
             else:
                 if restart_button:
                     restart_button.update_hover(mouse_pos)
@@ -685,7 +759,7 @@ async def main():
                     }
 
             # AI turn if mode 1P and turn == 1
-            if mode_selected == 0 and turn == 1 and not attacking:
+            if mode_selected == 0 and turn == 1 and not attacking and action_lockout == 0:
                 pygame.time.wait(600)
                 ai_turn()
         
