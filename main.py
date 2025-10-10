@@ -5,6 +5,8 @@ import random
 import math
 import os
 
+print('yes')
+
 pygame.init()
 pygame.mixer.init()
 
