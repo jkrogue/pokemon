@@ -8,7 +8,6 @@ import os
 pygame.init()
 pygame.mixer.init()
 
-print('yes')
 # --- Window ---
 WIDTH, HEIGHT = 800, 400
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
